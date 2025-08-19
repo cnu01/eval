@@ -3,19 +3,30 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import motor.motor_asyncio
 from uuid import UUID, uuid4
-# from bson.codec_options import CodecOptions
-# from bson.uuid_representation import UuidRepresentation
+# from bson import ObjectId
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.llms import OpenAI
+from langchain.vectorstores import Chroma
+from langchain.document_loaders import PyPDFLoader
+from typing import Optional
+from datetime import datetime
+
+
+
+OPENAI_API_KEY = ""  # need to use .env
+
 
 app = FastAPI()
 
-client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://cnu:jb1y6avC2cm6oRxg@cluster0.xiuz0db.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0',uuidRepresentation='standard')
+client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://cnu:jb1y6avC2cm6oRxg@cluster0.xiuz0db.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0',uuidRepresentation='standard') # need to use .env
 
 db = client.test_database
 
-# print(db)
 
 class User(BaseModel):
-    id: UUID = Field(alias="_id", default_factory=uuid4)
+    # id: Optional[str] = Field(alias="_id")
+    # id: ObjectId = Field(description="User id")
     Users: str
     name : str
     email: str
@@ -26,25 +37,25 @@ class User(BaseModel):
     goals :str
      
 class Workouts(BaseModel):
-     id: UUID = Field(alias="_id", default_factory=uuid4)
+    #  id: UUID = Field(alias="_id", default_factory=uuid4)
      user_id : str
      plan_name : str
-     date: str
+     date: datetime = None
      exercises : str
      duration : str
                 
 
  
 class Nutrition(BaseModel):
-     id: UUID = Field(alias="_id", default_factory=uuid4)
+    #  id: UUID = Field(alias="_id", default_factory=uuid4)
      user_id : str
-     date: str
+     date: datetime = None
      meals : str
      calories : str
      macros : str
      
 class Progress(BaseModel):
-    id: UUID = Field(alias="_id", default_factory=uuid4)
+    # id: UUID = Field(alias="_id", default_factory=uuid4)
     user_id : str
     workout_id : str
     sets : str
@@ -52,11 +63,11 @@ class Progress(BaseModel):
     weights : str
     notes : str
     
-   
-    
-#  POST /auth/register - User registration
-# POST /auth/login - User login
-# GET /auth/user/{user_id} - Get user profile   
+class chatModel(BaseModel):
+    user_id : str
+    prompt : str
+    response : str
+     
 
 @app.get("/")
 def read_root():
@@ -66,6 +77,7 @@ def read_root():
 
 @app.post("/auth/register", response_model=User)
 async def insert_user(user: User):
+    print(user)
     result = await db["users"].insert_one(user.dict())
     inserted_user = await db["users"].find_one({"_id": result.inserted_id})
     return inserted_user
@@ -167,8 +179,6 @@ async def delete(id: str):
 
 
 
-
-
 @app.post("/Progress/addProgress", response_model=Progress)
 async def insert_user(progress: Progress):
     result = await db["progress"].insert_one(progress.dict())
@@ -197,3 +207,43 @@ async def deletel(id: str):
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
     return {"message": "User deleted successfully"}
+
+@app.get('/chat/ask',response_model=chatModel)
+async def ChatwithRag(user:User, prompot):
+    response =  rag(rag)
+    result = await db["chat"].insert_one({'user_id':user.id, "prompt":prompot,"response" : 'response'})
+    return response
+
+@app.get('/chat/history/{user_id}',response_model=chatModel)
+async def getChathistory(user_id:str):
+    data = await db["chat"].find_one({user_id}).to_list(None)
+    return data
+    
+
+
+
+def rag(prompt):
+    source_file = "pdf-file"
+    loader = PyPDFLoader(source_file)
+    docs = loader.load()
+    for i, doc in enumerate(docs):
+        doc.metadata = doc.metadata or {}
+        doc.metadata["source"] = source_file
+        doc.metadata["page_number"] = i + 1
+        
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = splitter.split_documents(docs)
+
+    embeddings = OpenAIEmbeddings()
+    vectorstore = Chroma.from_documents(chunks, embeddings)
+
+
+    results = vectorstore.similarity_search(prompt, k=4)
+
+    context = "\n\n".join([doc.page_content for doc in results])
+
+    llm = OpenAI()
+    response = llm(context)
+
+    return response
+    
